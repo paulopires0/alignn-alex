@@ -351,16 +351,14 @@ def get_prediction(
     )
     lat = torch.tensor(atoms.lattice_mat)
 
-    out_data = (
-        model([g.to(device), lg.to(device), lat.to(device)])["out"]
-        .detach()
-        .cpu()
-        .numpy()
-        .flatten()
-        .tolist()
-    )
-    return out_data
+    out = model([g.to(device), lg.to(device), lat.to(device)])
 
+    if isinstance(out, dict) and "out" in out:
+        return out["out"].detach().cpu().numpy().flatten().tolist()
+    elif torch.is_tensor(out):
+        return out.detach().cpu().numpy().flatten().tolist()
+    
+    return out
 
 def get_multiple_predictions(
     atoms_array=[],
