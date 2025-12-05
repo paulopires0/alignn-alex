@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/home/users/ruivopy6/folders/software/env/bin/python3
 
 """Module to download and load pre-trained ALIGNN models."""
 import requests
@@ -6,6 +6,7 @@ import os
 import zipfile
 from tqdm import tqdm
 from alignn.models.alignn import ALIGNN, ALIGNNConfig
+from alignn.models.alignn_atomwise import ALIGNNAtomWise, ALIGNNAtomWiseConfig
 from torch.utils.data import DataLoader
 import tempfile
 import torch
@@ -227,6 +228,13 @@ parser.add_argument(
     + " construction.",
 )
 
+parser.add_argument(
+    "--alex_model",
+    default=None,
+    help="Loads the models trained from Alexandria (./alginn/property_name)"
+    + "where model_property: [band_gap, dos_pa, e_form, e_hull, e_total, mag_per_vol, vol_pa]"
+)
+
 
 device = "cpu"
 if torch.cuda.is_available():
@@ -303,14 +311,38 @@ def get_figshare_model(model_name="jv_formation_energy_peratom_alignn"):
     return model
 
 
+def get_alex_model(alex_model_folder):
+    """Load Alexandria trained models
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    model_dir = os.path.join(script_dir, "alignn_models", alex_model_folder)
+    cfg_path = os.path.join(model_dir, "config.json")
+    chk_path = os.path.join(model_dir, "best_model.pt")
+    with open(cfg_path, "r") as f:
+        config = json.load(f)
+    model = ALIGNNAtomWise(config=ALIGNNAtomWiseConfig(**config["model"]))
+
+    state = torch.load(chk_path, map_location=device)
+
+    if isinstance(state, dict) and "model" in state:
+        state = state["model"]
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+    return model
+
+
 def get_prediction(
     model_name="jv_formation_energy_peratom_alignn",
     atoms=None,
     cutoff=8,
     max_neighbors=12,
+    model=None,
 ):
     """Get model prediction on a single structure."""
-    model = get_figshare_model(model_name)
+    if model is None:
+        model = get_figshare_model(model_name)
     # print("Loading completed.")
     g, lg = Graph.atom_dgl_multigraph(
         atoms,
@@ -318,8 +350,9 @@ def get_prediction(
         max_neighbors=max_neighbors,
     )
     lat = torch.tensor(atoms.lattice_mat)
+
     out_data = (
-        model([g.to(device), lg.to(device), lat.to(device)])
+        model([g.to(device), lg.to(device), lat.to(device)])["out"]
         .detach()
         .cpu()
         .numpy()
@@ -451,6 +484,7 @@ def get_multiple_predictions(
 if __name__ == "__main__":
     args = parser.parse_args(sys.argv[1:])
     model_name = args.model_name
+    alex_model = args.alex_model
     file_path = args.file_path
     file_format = args.file_format
     cutoff = args.cutoff
@@ -466,14 +500,19 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError("File format not implemented", file_format)
 
+    alex_model_obj = None
+    if alex_model:
+        alex_model_obj = get_alex_model(alex_model)
     out_data = get_prediction(
         model_name=model_name,
         cutoff=float(cutoff),
         max_neighbors=int(max_neighbors),
         atoms=atoms,
+        model=alex_model_obj,
     )
 
-    print("Predicted value:", model_name, file_path, out_data)
+    used_model_label = alex_model if alex_model else model_name
+    print("Predicted value:", used_model_label, file_path, out_data)
     # import glob
     # atoms_array = []
     # for i in glob.glob("alignn/examples/sample_data/*.vasp"):
